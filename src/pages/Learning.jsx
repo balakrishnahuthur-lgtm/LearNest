@@ -10,10 +10,7 @@ import { ArrowLeft, LogOut, Loader2, SkipForward } from 'lucide-react';
 
 const MAX_INTERRUPTS = 3;
 
-const randomIntervalMs = (demo) =>
-  demo
-    ? Math.floor(Math.random() * 15_000) + 10_000
-    : Math.floor(Math.random() * 90_000) + 60_000;
+const randomIntervalMs = () => Math.floor(Math.random() * 2_000) + 10_000;
 
 const SKIP_THRESHOLD_SEC = 8;
 const POLL_MS = 1_500;
