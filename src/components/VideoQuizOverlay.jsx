@@ -1,22 +1,16 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { checkAnswer, generateAnalogy } from '../services/ClaudeAPI';
-import { Loader2 } from 'lucide-react';
+import { checkAnswer, generateAnalogy, generateDoubtIntervention } from '../services/ClaudeAPI';
+import { Loader2, Sparkles } from 'lucide-react';
 
-/**
- * Spec-exact inline quiz overlay.
- * Tracks: timeToFirstKeypress, backspaceCount, totalTimeTaken
- * On submit → Claude checks answer
- * If correct  → green feedback + auto-resume after 2s
- * If wrong    → Claude analogy + "Got it" / "Explain Differently"
- * onDone({ timeToFirstKeypress, backspaceCount, totalTimeTaken, correct, reExplanations })
- */
 export default function VideoQuizOverlay({ visible, question, topicTitle, demoMode, onDone }) {
+  const [activeQuestion, setActiveQuestion] = useState('');
   const [input, setInput]             = useState('');
-  const [phase, setPhase]             = useState('question'); // question | checking | correct | wrong | analogy
+  const [phase, setPhase]             = useState('question'); // question | checking | correct | wrong | analogy | doubt-loading | doubt-ready
   const [feedback, setFeedback]       = useState('');
   const [analogy, setAnalogy]         = useState('');
   const [loadingAnalogy, setLoadingAnalogy] = useState(false);
   const [resumeCountdown, setResumeCountdown] = useState(2);
+  const [doubtData, setDoubtData]     = useState(null);
 
   // Behavioral signals
   const timeStartRef      = useRef(null);
@@ -29,11 +23,13 @@ export default function VideoQuizOverlay({ visible, question, topicTitle, demoMo
 
   // Reset when overlay opens
   useEffect(() => {
-    if (visible) {
+    if (visible && question) {
+      setActiveQuestion(question);
       setInput('');
       setPhase('question');
       setFeedback('');
       setAnalogy('');
+      setDoubtData(null);
       backspaceRef.current = 0;
       firstKeyPressRef.current = null;
       reExplanationRef.current = 0;
@@ -41,7 +37,24 @@ export default function VideoQuizOverlay({ visible, question, topicTitle, demoMo
       setTimeout(() => inputRef.current?.focus(), 200);
     }
     return () => clearInterval(countdownRef.current);
-  }, [visible]);
+  }, [visible, question]);
+
+  // Doubt Trigger Timer
+  useEffect(() => {
+    if (!visible || phase !== 'question' || !activeQuestion) return;
+
+    const interval = setInterval(() => {
+      const wordCount = activeQuestion.trim().split(/\s+/).length;
+      const dynamicThreshold = Math.max(10000, Math.min(30000, (wordCount * 500) + 5000));
+      
+      const timeSpent = Date.now() - timeStartRef.current;
+      if (timeSpent > dynamicThreshold) {
+        triggerDoubtIntervention();
+      }
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [visible, phase, activeQuestion]);
 
   // Countdown when correct
   useEffect(() => {
@@ -60,7 +73,7 @@ export default function VideoQuizOverlay({ visible, question, topicTitle, demoMo
     return () => clearInterval(countdownRef.current);
   }, [phase]);
 
-  if (!visible || !question) return null;
+  if (!visible || !activeQuestion) return null;
 
   const fireDone = (correct) => {
     onDone({
@@ -74,9 +87,33 @@ export default function VideoQuizOverlay({ visible, question, topicTitle, demoMo
     });
   };
 
+  const triggerDoubtIntervention = async () => {
+    setPhase('doubt-loading');
+    const res = await generateDoubtIntervention(topicTitle, activeQuestion, demoMode);
+    setDoubtData(res);
+    setPhase('doubt-ready');
+  };
+
+  const applyDoubtIntervention = () => {
+    setActiveQuestion(doubtData.newQuestion.prompt || doubtData.newQuestion.question);
+    setDoubtData(null);
+    setPhase('question');
+    setInput('');
+    timeStartRef.current = Date.now();
+    backspaceRef.current = 0;
+    setTimeout(() => inputRef.current?.focus(), 200);
+  };
+
   const handleKeyDown = (e) => {
     if (firstKeyPressRef.current === null) firstKeyPressRef.current = Date.now();
-    if (e.key === 'Backspace') backspaceRef.current += 1;
+    
+    if (e.key === 'Backspace' || e.key === 'Delete') {
+      backspaceRef.current += 1;
+      if (backspaceRef.current >= 5 && phase === 'question') {
+        triggerDoubtIntervention();
+      }
+    }
+    
     if (e.key === 'Enter' && phase === 'question') handleSubmit();
   };
 
@@ -84,7 +121,7 @@ export default function VideoQuizOverlay({ visible, question, topicTitle, demoMo
     if (!input.trim() || phase !== 'question') return;
     setPhase('checking');
     try {
-      const result = await checkAnswer(topicTitle, question, input.trim(), demoMode);
+      const result = await checkAnswer(topicTitle, activeQuestion, input.trim(), demoMode);
       if (result.correct) {
         setFeedback(result.feedback);
         setPhase('correct');
@@ -119,7 +156,7 @@ export default function VideoQuizOverlay({ visible, question, topicTitle, demoMo
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4"
       style={{ background: 'rgba(0,0,0,0.92)', backdropFilter: 'blur(4px)' }}>
 
-      <div className="w-full max-w-[480px] animate-slide-up overflow-hidden"
+      <div className="w-full max-w-[480px] animate-slide-up overflow-hidden relative"
         style={{ background: '#111', border: '1px solid rgba(124,58,237,0.3)', borderRadius: '20px 20px 0 0', padding: '24px' }}>
 
         {/* Header */}
@@ -137,7 +174,7 @@ export default function VideoQuizOverlay({ visible, question, topicTitle, demoMo
         {(phase === 'question' || phase === 'checking') && (
           <>
             <p className="text-base font-medium mb-5 leading-relaxed" style={{ color: '#f0f0f0' }}>
-              {question.split('_____').map((part, i, arr) => (
+              {activeQuestion.split('_____').map((part, i, arr) => (
                 <React.Fragment key={i}>
                   {part}
                   {i < arr.length - 1 && (
@@ -214,6 +251,31 @@ export default function VideoQuizOverlay({ visible, question, topicTitle, demoMo
                 {loadingAnalogy ? 'Loading...' : 'Explain Differently'}
               </button>
             </div>
+          </div>
+        )}
+
+        {/* ── DOUBT INTERVENTION phases ── */}
+        {(phase === 'doubt-loading' || phase === 'doubt-ready') && (
+          <div className="absolute inset-0 z-50 flex items-center justify-center p-5 bg-black/80 backdrop-blur-md">
+            {phase === 'doubt-loading' ? (
+              <div className="text-center">
+                <Loader2 className="w-12 h-12 animate-spin text-indigo-500 mx-auto mb-4" />
+                <p className="text-white font-bold text-lg">AI is analyzing your behavior...</p>
+              </div>
+            ) : (
+              <div className="text-center w-full">
+                <div className="w-16 h-16 mx-auto bg-indigo-500/20 rounded-full flex items-center justify-center mb-4">
+                  <Sparkles className="w-8 h-8 text-indigo-400" />
+                </div>
+                <h3 className="text-xl font-bold text-white mb-2">Doubt in this topic?</h3>
+                <p className="text-slate-300 text-sm mb-6 leading-relaxed">
+                  {doubtData?.analogy}
+                </p>
+                <button onClick={applyDoubtIntervention} className="btn-primary">
+                  Got it, give me a new question
+                </button>
+              </div>
+            )}
           </div>
         )}
       </div>
