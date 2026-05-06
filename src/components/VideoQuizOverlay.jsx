@@ -271,9 +271,14 @@ export default function VideoQuizOverlay({ visible, question, topicTitle, demoMo
                 <p className="text-slate-300 text-sm mb-6 leading-relaxed">
                   {doubtData?.analogy}
                 </p>
-                <button onClick={applyDoubtIntervention} className="btn-primary">
-                  Got it, give me a new question
-                </button>
+                <div className="flex flex-col gap-3">
+                  <button onClick={applyDoubtIntervention} className="btn-primary">
+                    Got it, give me a new question
+                  </button>
+                  <button onClick={() => fireDone(false)} className="btn-secondary">
+                    Got it — Resume Video
+                  </button>
+                </div>
               </div>
             )}
           </div>
